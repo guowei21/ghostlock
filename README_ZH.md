@@ -34,7 +34,7 @@
 ## 快速开始
 
 
-> GhostLock 提权后默认优先尝试 **FolkPatch 越狱模式**：检测到 `apd`（`/data/adb/apd`、`/data/adb/ap/apd`、`/data/local/tmp/apd`、`$GHOSTLOCK_HOME/apd` 或 `me.yuki.folk` 应用 native lib）与对应 KMI 的 `kernelpatch.ko` 后，直接执行 `apd late-load --module <ko> --kmi <kmi> --package-name me.yuki.folk` 完成模块加载与 Magisk 策略注入。由于 W1/W2/W3 已经提供完整 root，不需要再次走 adb Magica 提权；成功后写入 `/data/adb/ap/jailbreak` 标记并恢复 Enforcing。
+> GhostLock 提权后默认优先尝试 **FolkPatch 越狱模式**：检测到 `apd`（`/data/adb/apd`、`/data/adb/ap/apd`、`/data/local/tmp/apd`、`$GHOSTLOCK_HOME/apd` 或 `me.yuki.folk` 应用 native lib）与对应 KMI 的 `kernelpatch.ko` 后，调用 `apd late-load --magica 5555 --module <ko> --kmi <kmi> --package-name me.yuki.folk`，使用 FolkPatch 自带的 Magica 链完成 adb-root、模块加载与 Magisk 策略注入。该路径不主动写入 `/sys/fs/selinux/enforce`，成功后写入 `/data/adb/ap/jailbreak` 标记并恢复 adb 属性。
 >
 > - `GHOSTLOCK_BACKEND=auto`（默认）：FolkPatch 优先，失败后回退 KernelSU。
 > - `GHOSTLOCK_BACKEND=fp`：只走 FolkPatch，失败即退出。
