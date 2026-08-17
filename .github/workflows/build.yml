@@ -75,17 +75,31 @@ jobs:
         run: rustup toolchain link ondk "${{ runner.temp }}/ondk/toolchains/rust"
 
       - name: Decode Android signing key
-        run: echo ${{ secrets.SIGNING_KEY }} | base64 -d > keystore.jks
+        env:
+          SIGNING_KEY: ${{ secrets.SIGNING_KEY }}
+        run: |
+          if [ -n "$SIGNING_KEY" ]; then
+            printf '%s' "$SIGNING_KEY" | base64 --decode > keystore.jks
+            echo "Using repository release signing key."
+          else
+            rm -f keystore.jks
+            echo "SIGNING_KEY is not configured; Gradle will use debug signing."
+          fi
 
       - name: Build Release APK
+        env:
+          KEYSTORE_PASS: ${{ secrets.KEY_STORE_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.ALIAS }}
+          KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
         run: |
           export ONDK_HOME="${{ runner.temp }}/ondk"
           export ANDROID_NDK_HOME="$ONDK_HOME"
           export NDK_ROOT="$ONDK_HOME"
-          export KEYSTORE_PATH="../keystore.jks"
-          export KEYSTORE_PASS="${{ secrets.KEY_STORE_PASSWORD }}"
-          export KEY_ALIAS="${{ secrets.ALIAS }}"
-          export KEY_PASSWORD="${{ secrets.KEY_PASSWORD }}"
+          if [ -s "$GITHUB_WORKSPACE/keystore.jks" ]; then
+            export KEYSTORE_PATH="$GITHUB_WORKSPACE/keystore.jks"
+          else
+            unset KEYSTORE_PATH
+          fi
           ./gradlew :app:assembleRelease --no-daemon
 
       - name: Rename Release APK

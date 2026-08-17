@@ -14,6 +14,12 @@ def keystorePath = System.getenv('KEYSTORE_PATH') ?: signingProps.getProperty('K
 def keystorePwd = System.getenv('KEYSTORE_PASS') ?: signingProps.getProperty('KEYSTORE_PASS')
 def alias = System.getenv('KEY_ALIAS') ?: signingProps.getProperty('KEY_ALIAS')
 def keyPwd = System.getenv('KEY_PASSWORD') ?: signingProps.getProperty('KEY_PASSWORD')
+def keystoreFile = keystorePath ? file(keystorePath) : null
+def hasReleaseSigning = keystoreFile != null && keystoreFile.isFile() &&
+        [keystorePwd, alias, keyPwd].every { it != null && !it.trim().isEmpty() }
+if (keystorePath != null && !hasReleaseSigning) {
+    println "warning: release keystore is unavailable or incomplete; using debug signing"
+}
 
 def gitVersionCode
 try {
@@ -153,9 +159,9 @@ tasks.register('generateSupportedKernels') {
 
 android {
     signingConfigs {
-        if (keystorePath != null && keystorePwd != null && alias != null && keyPwd != null) {
+        if (hasReleaseSigning) {
             release {
-                storeFile file(keystorePath)
+                storeFile keystoreFile
                 storePassword keystorePwd
                 keyAlias alias
                 keyPassword keyPwd
@@ -192,7 +198,7 @@ android {
         release {
             minifyEnabled true
             proguardFiles getDefaultProguardFile('proguard-android-optimize.txt'), 'proguard-rules.pro'
-            if (keystorePath != null) {
+            if (hasReleaseSigning) {
                 signingConfig signingConfigs.release
             } else {
                 signingConfig signingConfigs.debug
@@ -200,7 +206,7 @@ android {
         }
         debug {
             minifyEnabled false
-            if (keystorePath != null) {
+            if (hasReleaseSigning) {
                 signingConfig signingConfigs.release
             }
         }
