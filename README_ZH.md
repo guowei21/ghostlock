@@ -33,7 +33,16 @@
 
 ## 快速开始
 
-打开 **GhostLock** 点击 **执行**。需先装 KernelSU（`me.weishu.kernelsu`）或 ReSukiSU（`com.resukisu.resukisu`）以提供 `ksud`；缺 `ksud` 时 W1/W2 仍可拿到 uid 0，但不会加载模块。
+
+> GhostLock 提权后默认优先尝试 **FolkPatch 越狱模式**：检测到 `apd`（`/data/adb/apd`、`/data/adb/ap/apd`、`/data/local/tmp/apd`、`$GHOSTLOCK_HOME/apd` 或 `me.yuki.folk` 应用 native lib）与对应 KMI 的 `kernelpatch.ko` 后，直接执行 `apd late-load --module <ko> --kmi <kmi> --package-name me.yuki.folk` 完成模块加载与 Magisk 策略注入。由于 W1/W2/W3 已经提供完整 root，不需要再次走 adb Magica 提权；成功后写入 `/data/adb/ap/jailbreak` 标记并恢复 Enforcing。
+>
+> - `GHOSTLOCK_BACKEND=auto`（默认）：FolkPatch 优先，失败后回退 KernelSU。
+> - `GHOSTLOCK_BACKEND=fp`：只走 FolkPatch，失败即退出。
+> - `GHOSTLOCK_BACKEND=ksu`：只走 KernelSU。
+> - 日志：`$GHOSTLOCK_HOME/.ghostlock_fp.log` 与 `$GHOSTLOCK_HOME/.ghostlock_ksu.log`。
+>
+
+打开 **GhostLock** 点击 **执行**。默认优先尝试 FolkPatch 越狱模式；若 FolkPatch 不可用，再回退到 KernelSU/ReSukiSU 的 `ksud` 路径。缺少后端时，W1/W2 仍可拿到 uid 0，但不会加载对应模块。
 
 路线是双核竞争：主线程跑 pselect 爆破，consumer 线程扰动 waiter 优先级。核心对默认取大核（不可用时回退 0/1），可用 `GHOSTLOCK_CORE` / `GHOSTLOCK_CONSUMER_CORE` 覆盖。
 

